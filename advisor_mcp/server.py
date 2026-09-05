@@ -8,6 +8,9 @@ the existing Claude Max subscription via its OAuth token.
 from __future__ import annotations
 
 import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import httpx
@@ -30,7 +33,30 @@ OAUTH_BETA = "oauth-2025-04-20"
 # Claude Code usage, so this beta + user-agent + identity line are load-bearing
 # for API-key auth too, not just OAuth.
 CLAUDE_CODE_BETA = "claude-code-20250219"
-CLAUDE_CODE_USER_AGENT = "claude-cli/2.1.206 (external, cli)"
+# The API refuses newer models to Claude Code versions below a moving minimum,
+# so report the version of the locally installed `claude` binary. Falls back to
+# this pinned version if the binary is missing; CLAUDE_CODE_VERSION overrides both.
+_FALLBACK_CLAUDE_CODE_VERSION = "2.1.261"
+
+
+def _detect_claude_code_version() -> str:
+    override = os.getenv("CLAUDE_CODE_VERSION")
+    if override:
+        return override
+    exe = shutil.which("claude")
+    if exe:
+        try:
+            out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=15).stdout
+            match = re.search(r"\d+\.\d+\.\d+", out)
+            if match:
+                return match.group(0)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return _FALLBACK_CLAUDE_CODE_VERSION
+
+
+CLAUDE_CODE_VERSION = _detect_claude_code_version()
+CLAUDE_CODE_USER_AGENT = f"claude-cli/{CLAUDE_CODE_VERSION} (external, cli)"
 # The credential is only accepted for Claude Code; the system prompt must
 # lead with this identity line.
 CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
@@ -156,7 +182,7 @@ def ask_advisor(
 @mcp.tool()
 def get_version() -> str:
     """Return this MCP server's name, version, and configured advisor model."""
-    return f"advisor-mcp {__version__} (default model: {DEFAULT_MODEL})"
+    return f"advisor-mcp {__version__} (default model: {DEFAULT_MODEL}, presenting as Claude Code {CLAUDE_CODE_VERSION})"
 
 
 def main() -> None:
