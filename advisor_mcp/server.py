@@ -1,7 +1,7 @@
 """advisor-mcp server.
 
-Exposes tools that let the running model (Opus / Sonnet / Haiku) consult Fable
-(``claude-fable-5-1`` by default) for a second opinion or extra guidance, billed to
+Exposes tools that let the running model (Opus / Sonnet / Haiku) consult an advisor model
+(``claude-opus-5-5`` by default) for a second opinion or extra guidance, billed to
 the existing Claude Max subscription via its OAuth token.
 """
 
@@ -36,7 +36,7 @@ CLAUDE_CODE_BETA = "claude-code-20250219"
 # The API refuses newer models to Claude Code versions below a moving minimum,
 # so report the version of the locally installed `claude` binary. Falls back to
 # this pinned version if the binary is missing; CLAUDE_CODE_VERSION overrides both.
-_FALLBACK_CLAUDE_CODE_VERSION = "2.1.261"
+_FALLBACK_CLAUDE_CODE_VERSION = "2.1.280"
 
 
 def _detect_claude_code_version() -> str:
@@ -61,12 +61,12 @@ CLAUDE_CODE_USER_AGENT = f"claude-cli/{CLAUDE_CODE_VERSION} (external, cli)"
 # lead with this identity line.
 CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
-DEFAULT_MODEL = os.environ.get("ADVISOR_MODEL", "claude-fable-5-1")
+DEFAULT_MODEL = os.environ.get("ADVISOR_MODEL", "claude-opus-5-5")
 DEFAULT_MAX_TOKENS = int(os.environ.get("ADVISOR_MAX_TOKENS", "128000"))
 REQUEST_TIMEOUT = float(os.environ.get("ADVISOR_TIMEOUT", "120"))
 
 ADVISOR_ROLE = (
-    "You are Fable, acting as a senior technical advisor to another AI coding "
+    "You are acting as a senior technical advisor to another AI coding "
     "agent. Give direct, well-reasoned guidance: weigh trade-offs, flag risks and "
     "edge cases, and recommend a concrete course of action. Be concise and "
     "practical rather than exhaustive."
@@ -75,7 +75,7 @@ ADVISOR_ROLE = (
 mcp = FastMCP("advisor")
 
 
-def _call_fable(
+def _call_advisor(
     prompt: str,
     *,
     context: str | None,
@@ -96,9 +96,9 @@ def _call_fable(
         ],
         "messages": [{"role": "user", "content": user_content}],
     }
-    # Fable 5 / Opus 4.7+ reject sampling parameters; only send a non-default
+    # Fable 5 / Opus 4.7+ / Opus 5 reject sampling parameters; only send a non-default
     # temperature, and never to models that would 400 on it.
-    if temperature != 1.0 and not model.startswith(("claude-fable", "claude-mythos", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5")):
+    if temperature != 1.0 and not model.startswith(("claude-fable", "claude-mythos", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5")):
         body["temperature"] = temperature
 
     headers = {
@@ -128,10 +128,10 @@ def _call_fable(
         return text
     if data.get("stop_reason") == "max_tokens":
         return (
-            "(Fable produced no text — the token budget was consumed by internal "
+            "(The advisor produced no text — the token budget was consumed by internal "
             "reasoning. Retry with a larger max_tokens.)"
         )
-    return "(Fable returned no text.)"
+    return "(The advisor returned no text.)"
 
 
 @mcp.tool()
@@ -142,7 +142,7 @@ def ask_advisor(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = 1.0,
 ) -> str:
-    """Consult Fable for a second opinion or extra guidance on a hard problem.
+    """Consult the advisor model for a second opinion or extra guidance on a hard problem.
 
     Use this when you want an independent perspective from a different model —
     for architecture calls, tricky trade-offs, reviewing a plan, or sanity-checking
@@ -155,7 +155,7 @@ def ask_advisor(
         context: Optional supporting material (code, error output, a draft plan)
             that the advisor should consider when answering.
         model: Advisor model to query. Defaults to the configured model
-            (``claude-fable-5-1``).
+            (``claude-opus-5-5``).
         max_tokens: Maximum tokens in the advisor's response.
         temperature: Sampling temperature (0.0-1.0).
 
@@ -163,7 +163,7 @@ def ask_advisor(
         The advisor's guidance as text.
     """
     try:
-        return _call_fable(
+        return _call_advisor(
             prompt,
             context=context,
             model=model,
