@@ -16,7 +16,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from . import __version__
 from .credentials import CredentialError, get_credential
@@ -87,7 +87,7 @@ ADVISOR_ROLE = (
     "practical rather than exhaustive."
 )
 
-mcp = FastMCP("advisor")
+mcp = MCPServer("advisor")
 
 
 def _call_advisor(
