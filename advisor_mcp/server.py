@@ -1,12 +1,13 @@
 """advisor-mcp server.
 
 Exposes tools that let the running model (Opus / Sonnet / Haiku) consult an advisor model
-(``claude-opus-5-5`` by default) for a second opinion or extra guidance, billed to
+(``claude-fable-5-1`` by default) for a second opinion or extra guidance, billed to
 the existing Claude Max subscription via its OAuth token.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -61,9 +62,23 @@ CLAUDE_CODE_USER_AGENT = f"claude-cli/{CLAUDE_CODE_VERSION} (external, cli)"
 # lead with this identity line.
 CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
-DEFAULT_MODEL = os.environ.get("ADVISOR_MODEL", "claude-opus-5-5")
+DEFAULT_MODEL = os.environ.get("ADVISOR_MODEL", "claude-fable-5-1")
 DEFAULT_MAX_TOKENS = int(os.environ.get("ADVISOR_MAX_TOKENS", "128000"))
-REQUEST_TIMEOUT = float(os.environ.get("ADVISOR_TIMEOUT", "120"))
+# Opus 5.5 defaults to "medium" effort, so always send one explicitly.
+DEFAULT_EFFORT = os.environ.get("ADVISOR_EFFORT", "high")
+# Responses stream, so this bounds the gap between events, not the whole call;
+# hard prompts can think for many minutes.
+REQUEST_TIMEOUT = float(os.environ.get("ADVISOR_TIMEOUT", "300"))
+
+# Models that reject sampling parameters and accept output_config.effort.
+_EFFORT_MODEL_PREFIXES = (
+    "claude-fable",
+    "claude-mythos",
+    "claude-opus-5",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-sonnet-5",
+)
 
 ADVISOR_ROLE = (
     "You are acting as a senior technical advisor to another AI coding "
@@ -82,6 +97,7 @@ def _call_advisor(
     model: str,
     max_tokens: int,
     temperature: float,
+    effort: str,
 ) -> str:
     credential = get_credential()
 
@@ -95,10 +111,11 @@ def _call_advisor(
             {"type": "text", "text": ADVISOR_ROLE},
         ],
         "messages": [{"role": "user", "content": user_content}],
+        "stream": True,
     }
-    # Fable 5 / Opus 4.7+ / Opus 5 reject sampling parameters; only send a non-default
-    # temperature, and never to models that would 400 on it.
-    if temperature != 1.0 and not model.startswith(("claude-fable", "claude-mythos", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5")):
+    if model.startswith(_EFFORT_MODEL_PREFIXES):
+        body["output_config"] = {"effort": effort}
+    elif temperature != 1.0:
         body["temperature"] = temperature
 
     headers = {
@@ -114,19 +131,40 @@ def _call_advisor(
         headers["authorization"] = f"Bearer {credential.token}"
         headers["anthropic-beta"] = f"{OAUTH_BETA},{CLAUDE_CODE_BETA}"
 
-    resp = httpx.post(
-        API_URL,
-        json=body,
-        headers=headers,
-        timeout=REQUEST_TIMEOUT,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    parts = [block.get("text", "") for block in data.get("content", []) if block.get("type") == "text"]
+    parts: list[str] = []
+    stop_reason = None
+    stop_details = None
+    timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=30.0)
+    with httpx.stream("POST", API_URL, json=body, headers=headers, timeout=timeout) as resp:
+        if resp.is_error:
+            resp.read()
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if not line.startswith("data:"):
+                continue
+            event = json.loads(line[5:])
+            kind = event.get("type")
+            if kind == "content_block_delta" and event["delta"].get("type") == "text_delta":
+                parts.append(event["delta"]["text"])
+            elif kind == "message_delta":
+                stop_reason = event["delta"].get("stop_reason") or stop_reason
+                stop_details = event["delta"].get("stop_details") or stop_details
+            elif kind == "error":
+                error = event.get("error", {})
+                return f"Advisor request failed mid-stream ({error.get('type')}): {error.get('message')}"
+
     text = "".join(parts).strip()
+    if stop_reason == "refusal":
+        details = stop_details or {}
+        note = " ".join(filter(None, [
+            f"(The advisor declined this request — refusal category: {details.get('category') or 'unspecified'}.",
+            details.get("explanation"),
+            "Rephrase it, or retry with another model such as claude-opus-5-5.)",
+        ]))
+        return f"{text}\n\n{note}" if text else note
     if text:
         return text
-    if data.get("stop_reason") == "max_tokens":
+    if stop_reason == "max_tokens":
         return (
             "(The advisor produced no text — the token budget was consumed by internal "
             "reasoning. Retry with a larger max_tokens.)"
@@ -141,6 +179,7 @@ def ask_advisor(
     model: str = DEFAULT_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = 1.0,
+    effort: str = DEFAULT_EFFORT,
 ) -> str:
     """Consult the advisor model for a second opinion or extra guidance on a hard problem.
 
@@ -155,9 +194,12 @@ def ask_advisor(
         context: Optional supporting material (code, error output, a draft plan)
             that the advisor should consider when answering.
         model: Advisor model to query. Defaults to the configured model
-            (``claude-opus-5-5``).
+            (``claude-fable-5-1``).
         max_tokens: Maximum tokens in the advisor's response.
-        temperature: Sampling temperature (0.0-1.0).
+        temperature: Sampling temperature (0.0-1.0). Ignored by current models,
+            which reject sampling parameters.
+        effort: Reasoning effort for current models: "low", "medium", "high",
+            "xhigh", or "max". Higher is slower and more thorough.
 
     Returns:
         The advisor's guidance as text.
@@ -169,6 +211,7 @@ def ask_advisor(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
+            effort=effort,
         )
     except CredentialError as exc:
         return f"Advisor unavailable — credential error: {exc}"
@@ -182,7 +225,7 @@ def ask_advisor(
 @mcp.tool()
 def get_version() -> str:
     """Return this MCP server's name, version, and configured advisor model."""
-    return f"advisor-mcp {__version__} (default model: {DEFAULT_MODEL}, presenting as Claude Code {CLAUDE_CODE_VERSION})"
+    return f"advisor-mcp {__version__} (default model: {DEFAULT_MODEL}, effort: {DEFAULT_EFFORT}, presenting as Claude Code {CLAUDE_CODE_VERSION})"
 
 
 def main() -> None:

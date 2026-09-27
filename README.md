@@ -1,7 +1,7 @@
 # advisor-mcp
 
 A local [MCP](https://modelcontextprotocol.io) server that lets the model you're
-running in Claude Code (Opus / Sonnet / Haiku) consult **Opus 5.5** (`claude-opus-5-5`, configurable)
+running in Claude Code (Opus / Sonnet / Haiku) consult **Claude Fable 5.1** (`claude-fable-5-1`, configurable)
 for a second opinion or extra guidance.
 
 It **reuses the credential Claude Code already stores locally** — a Max/Pro
@@ -13,7 +13,7 @@ normal Claude Code usage.
 
 | Tool | Description |
 | --- | --- |
-| `ask_advisor` | Ask the advisor model for guidance. Args: `prompt`, optional `context`, `model`, `max_tokens`, `temperature`. |
+| `ask_advisor` | Ask the advisor model for guidance. Args: `prompt`, optional `context`, `model`, `max_tokens`, `temperature`, `effort`. |
 | `get_version` | Report the server version and configured advisor model. |
 
 ## How it works
@@ -67,5 +67,10 @@ directory, and `PYTHONPATH` makes the `advisor_mcp` package importable.
 ## Configuration
 
 All settings are optional and read from `.env` (git-ignored). See `.env.example`
-for the full list — `ADVISOR_MODEL`, `ADVISOR_MAX_TOKENS`, `ADVISOR_TIMEOUT`,
-`ADVISOR_CREDENTIALS_PATH`, and `ANTHROPIC_OAUTH_TOKEN`.
+for the full list — `ADVISOR_MODEL`, `ADVISOR_MAX_TOKENS`, `ADVISOR_EFFORT`,
+`ADVISOR_TIMEOUT`, `ADVISOR_CREDENTIALS_PATH`, and `ANTHROPIC_OAUTH_TOKEN`.
+
+Fable 5.1 requires 30-day data retention, so zero-data-retention orgs get a
+400; set `ADVISOR_MODEL=claude-opus-5-5` there, or where your plan lacks Fable
+access. Hard prompts can take several minutes because responses stream while
+the model thinks.
