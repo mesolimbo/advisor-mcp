@@ -1,7 +1,7 @@
 # advisor-mcp
 
 A local [MCP](https://modelcontextprotocol.io) server that lets the model you're
-running in Claude Code (Opus / Sonnet / Haiku) consult **Claude Fable 5.1** (`claude-fable-5-1`, configurable)
+running in Claude Code (Opus / Sonnet / Haiku) consult **Claude Fable 5.2** (`claude-fable-5-2`, configurable)
 for a second opinion or extra guidance.
 
 It **reuses the credential Claude Code already stores locally** — a Max/Pro
@@ -70,7 +70,7 @@ All settings are optional and read from `.env` (git-ignored). See `.env.example`
 for the full list — `ADVISOR_MODEL`, `ADVISOR_MAX_TOKENS`, `ADVISOR_EFFORT`,
 `ADVISOR_TIMEOUT`, `ADVISOR_CREDENTIALS_PATH`, and `ANTHROPIC_OAUTH_TOKEN`.
 
-Fable 5.1 requires 30-day data retention, so zero-data-retention orgs get a
+Fable 5.2 requires 30-day data retention, so zero-data-retention orgs get a
 400; set `ADVISOR_MODEL=claude-opus-5-5` there, or where your plan lacks Fable
 access. Hard prompts can take several minutes because responses stream while
 the model thinks.
